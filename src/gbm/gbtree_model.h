@@ -24,6 +24,10 @@ namespace xgboost {
 
 class Json;
 
+namespace interpretability::cuda_impl {
+struct GpuShapModelCache;
+}  // namespace interpretability::cuda_impl
+
 namespace gbm {
 /**
  * @brief Container for all trees built (not update) for one group.
@@ -135,6 +139,14 @@ struct GBTreeModel : public Model {
    */
   common::Span<bst_target_t const> TreeGroups(DeviceOrd device) const;
   [[nodiscard]] std::mutex& Mutex() const { return tree_view_mu_; }
+
+  /** @brief GPU SHAP's device copy of the trees, reused across calls. Guarded by `Mutex()`. */
+  mutable std::shared_ptr<interpretability::cuda_impl::GpuShapModelCache const> gpu_shap_cache;
+  /** @brief Drop data derived from the trees. Called whenever the trees change. */
+  void InvalidateCaches() {
+    std::lock_guard guard{tree_view_mu_};
+    gpu_shap_cache.reset();
+  }
 
  private:
   /**

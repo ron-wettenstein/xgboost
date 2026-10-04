@@ -90,6 +90,7 @@ void GBTreeModel::SaveModel(Json* p_out) const {
 void GBTreeModel::LoadModel(Json const& in) {
   FromJson(in["gbtree_model_param"], &param);
 
+  this->InvalidateCaches();
   trees.clear();
   trees_to_update.clear();
 
@@ -165,6 +166,7 @@ bst_tree_t GBTreeModel::CommitModel(TreesOneIter&& new_trees) {
 }
 
 void GBTreeModel::CommitModelGroup(TreesOneGroup&& new_trees, bst_target_t group_idx) {
+  this->InvalidateCaches();
   auto& h_tree_info = this->tree_info.HostVector();
   for (auto& new_tree : new_trees) {
     trees.push_back(std::move(new_tree));

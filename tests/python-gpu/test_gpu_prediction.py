@@ -426,6 +426,35 @@ class TestGPUPredict:
             np.sum(shap, axis=len(shap.shape) - 1), margin, rtol=1e-3
         )
 
+    def test_shap_follows_model_updates(self) -> None:
+        # GPU SHAP caches its compressed trees on the model; changes must refresh them.
+        X, y, _ = tm.make_regression(256, 8, use_cupy=False)
+        Xy = xgb.DMatrix(X, y)
+        booster = xgb.train({"device": "cuda", "max_depth": 4}, Xy, num_boost_round=2)
+
+        def check() -> None:
+            X_test = xgb.DMatrix(X)  # no cached margin from earlier predictions
+            margin = booster.predict(X_test, output_margin=True)
+            contribs = booster.predict(X_test, pred_contribs=True)
+            np.testing.assert_allclose(contribs.sum(1), margin, rtol=1e-3, atol=1e-3)
+            interactions = booster.predict(X_test, pred_interactions=True)
+            np.testing.assert_allclose(
+                interactions.sum((1, 2)), margin, rtol=1e-3, atol=1e-3
+            )
+
+        check()
+        booster.update(Xy, 2)  # appends trees
+        check()
+        # Rewrite the leaves in place. The tree count stays, so only invalidation helps.
+        n_rounds = booster.num_boosted_rounds()
+        booster.set_param(
+            {"device": "cpu", "process_type": "update", "updater": "refresh"}
+        )
+        for i in range(n_rounds):
+            booster.update(xgb.DMatrix(X, y * 2), i)
+        booster.set_param({"device": "cuda"})
+        check()
+
     @pytest.mark.parametrize(
         "DMatrixT", [xgb.DMatrix, xgb.QuantileDMatrix, xgb.ExtMemQuantileDMatrix]
     )
