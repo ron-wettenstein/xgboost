@@ -372,8 +372,6 @@ XGBOOST_DEVICE inline float ExtractQuadratureInteractionDeltaLocal(float quad_no
   return alpha_partner * edge_delta_local / (1.0f + alpha_partner * quad_node);
 }
 
-// Each row of a warp owns kGpuQuadraturePoints consecutive lanes, one per quadrature point. All rows
-// walk the same nodes, so every lane takes part in every shuffle.
 struct SubgroupOps {
   static_assert(kGpuQuadratureSegmentWidth == kGpuQuadraturePoints);
   int row_slot;
@@ -618,7 +616,6 @@ struct QuadratureShapTaskRunner {
     // the nearest previous split on the same feature.
     auto q_prev = PreviousPathProbability(node.prev_same_offset_plus1, depth,
                                           shared.PathProbabilityRow(warp, subgroup.row_slot));
-    // Every lane of the row loads the same feature value, so this costs one memory transaction.
     bool goes_left = this->EvaluateGoesLeft(ridx, node);
     // p_e is the path probability after taking the chosen child for this row.
     auto p_e = (child == 0 ? goes_left : !goes_left) ? q_prev / child_weight : 0.0f;
@@ -728,8 +725,6 @@ struct QuadratureShapInteractionTaskRunner {
     atomicAdd(phis + out_idx, contrib);
   }
 
-  // A split shadows the nearest ancestor on the same feature while it is on the path, so every
-  // feature has one unshadowed split: the deepest, which holds its current path probability.
   XGBOOST_DEV_INLINE void EnterPathNode(CompressedNode const& node, int depth) {
     shared.Split(warp, depth) = node.split_global;
     shared.SetShadowed(warp, depth, false);
@@ -742,7 +737,6 @@ struct QuadratureShapInteractionTaskRunner {
     if (node.prev_same_offset_plus1 == 0) {
       return;
     }
-    // Every lane must finish reading the flags before the leader clears one.
     subgroup.Sync();
     if (subgroup.is_warp_leader) {
       shared.SetShadowed(warp, depth - static_cast<int>(node.prev_same_offset_plus1) + 1, false);
@@ -750,8 +744,6 @@ struct QuadratureShapInteractionTaskRunner {
     subgroup.Sync();
   }
 
-  // The current split shadows earlier splits on its own feature, so only the ancestors above
-  // current_depth are scanned.
   template <typename Fn>
   XGBOOST_DEV_INLINE void ForEachUniquePartner(int current_depth, Fn&& fn) const {
     for (int depth = current_depth - 1; depth >= 0; --depth) {
