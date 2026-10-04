@@ -11,8 +11,6 @@
 #include <cuda/std/utility>  // for swap
 #include <cuda/std/variant>  // for variant
 #include <limits>
-#include <memory>  // for shared_ptr
-#include <mutex>   // for lock_guard
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -1145,39 +1143,6 @@ void LaunchShap(Context const* ctx, DMatrix* p_fmat, enc::DeviceColumnsView cons
 }
 
 }  // namespace
-
-// Compressing the trees costs O(nodes) host work and host-to-device copies, so the result is kept on
-// the model across calls. The model drops it whenever its trees change; the rest is checked here.
-struct GpuShapModelCache {
-  bst_tree_t tree_end;
-  bst_target_t n_groups;
-  DeviceOrd device;
-  std::vector<float> tree_weights;
-  GpuQuadratureModelData data;
-};
-
-namespace {
-std::shared_ptr<GpuShapModelCache const> CachedGpuQuadratureModel(
-    Context const* ctx, gbm::GBTreeModel const& model, bst_tree_t tree_end, bst_target_t n_groups,
-    std::vector<float> const* tree_weights, char const* prediction_kind) {
-  std::vector<float> weights;
-  if (tree_weights != nullptr) {
-    weights.assign(tree_weights->cbegin(),
-                   tree_weights->cbegin() + std::min<std::size_t>(tree_weights->size(), tree_end));
-  }
-  std::lock_guard guard{model.Mutex()};
-  auto cache = model.gpu_shap_cache;
-  if (!cache || cache->tree_end != tree_end || cache->n_groups != n_groups ||
-      cache->device != ctx->Device() || cache->tree_weights != weights) {
-    cache = std::make_shared<GpuShapModelCache>(GpuShapModelCache{
-        tree_end, n_groups, ctx->Device(), std::move(weights),
-        PrepareGpuQuadratureModel(model, tree_end, n_groups, tree_weights, prediction_kind)});
-    model.gpu_shap_cache = cache;
-  }
-  return cache;
-}
-}  // namespace
-
 void ShapValues(Context const* ctx, DMatrix* p_fmat, HostDeviceVector<float>* out_contribs,
                 gbm::GBTreeModel const& model, bst_tree_t tree_end,
                 std::vector<float> const* tree_weights) {
@@ -1193,9 +1158,8 @@ void ShapValues(Context const* ctx, DMatrix* p_fmat, HostDeviceVector<float>* ou
   out_contribs->Resize(p_fmat->Info().num_row_ * dim_size);
   out_contribs->Fill(0.0f);
 
-  auto cache =
-      CachedGpuQuadratureModel(ctx, model, tree_end, ngroup, tree_weights, "Predict contribution");
-  auto const& prepared = cache->data;
+  auto prepared =
+      PrepareGpuQuadratureModel(model, tree_end, ngroup, tree_weights, "Predict contribution");
 
   auto new_enc =
       p_fmat->Cats()->NeedRecode() ? p_fmat->Cats()->DeviceView(ctx) : enc::DeviceColumnsView{};
@@ -1242,9 +1206,8 @@ void ShapInteractionValues(Context const* ctx, DMatrix* p_fmat,
   out_contribs->Resize(p_fmat->Info().num_row_ * dim_size);
   out_contribs->Fill(0.0f);
 
-  auto cache = CachedGpuQuadratureModel(ctx, model, tree_end, ngroup, tree_weights,
-                                        "Predict interaction contribution");
-  auto const& prepared = cache->data;
+  auto prepared = PrepareGpuQuadratureModel(model, tree_end, ngroup, tree_weights,
+                                            "Predict interaction contribution");
 
   auto new_enc =
       p_fmat->Cats()->NeedRecode() ? p_fmat->Cats()->DeviceView(ctx) : enc::DeviceColumnsView{};

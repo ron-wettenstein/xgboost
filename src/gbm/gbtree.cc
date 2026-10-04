@@ -127,7 +127,6 @@ std::set<std::string> GBTree::Configure(Args const& cfg) {
 }
 
 void GBTreeModel::InitTreesToUpdate() {
-  this->InvalidateCaches();
   if (trees_to_update.empty()) {
     for (auto& tree : trees) {
       trees_to_update.push_back(std::move(tree));
